@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аукцион</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <h1 class="header-title">
+                    <i class="fas fa-gavel"></i>
+                    Аукцион
+                </h1>
+                <nav class="nav">
+                    <a href="/" class="nav-link" data-route="/">
+                        <i class="fas fa-home"></i>
+                        <span>Главная</span>
+                    </a>
+                    <a href="/profile" class="nav-link" data-route="/profile">
+                        <i class="fas fa-user"></i>
+                        <span>Профиль</span>
+                    </a>
+                    <a href="/admin" class="nav-link" data-route="/admin">
+                        <i class="fas fa-cog"></i>
+                        <span>Админ</span>
+                    </a>
+                </nav>
+                <div class="user-info" id="userInfo">
+                    <i class="fas fa-user-circle"></i>
+                    <span id="username">Гость</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Home Page -->
+            <div id="homePage" class="page">
+                <!-- Prize Card -->
+                <div class="prize-card">
+                    <div class="prize-icon">
+                        <i class="fas fa-trophy"></i>
+                    </div>
+                    <h2 class="prize-title" id="prizeTitle">Приз участникам топ-5</h2>
+                    <div class="prize-info">
+                        <div class="prize-info-item">
+                            <i class="fas fa-hashtag"></i>
+                            <span>Раунд #<span id="roundNumber">1</span> <span id="roundInfo" style="color: #faad14; font-weight: 600;">(5 победителей получат приз)</span></span>
+                        </div>
+                        <div class="prize-info-item">
+                            <i class="fas fa-circle" id="statusIcon"></i>
+                            <span id="auctionStatus">Активен</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Timer Card -->
+                <div class="timer-card">
+                    <div class="timer-label">
+                        <i class="fas fa-clock"></i>
+                        До конца раунда
+                    </div>
+                    <div class="timer-value" id="timer">00:00:00</div>
+                </div>
+
+                <!-- Bid Form -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-hand-holding-dollar"></i>
+                        Разместить ставку
+                    </h3>
+                    <div class="bid-form">
+                        <div class="form-group">
+                            <label for="bidAmount">Сумма ставки (руб.)</label>
+                            <input type="number" id="bidAmount" class="form-input" placeholder="Введите сумму" min="0">
+                        </div>
+                        <div class="slider-group">
+                            <input type="range" id="bidSlider" class="slider" min="0" max="10000" value="0" step="100">
+                            <div class="slider-labels">
+                                <span id="sliderMin">0</span>
+                                <span id="sliderMax">10000</span>
+                            </div>
+                        </div>
+                        <div class="quick-buttons">
+                            <button class="btn btn-secondary" data-amount="1000">
+                                <i class="fas fa-plus"></i>
+                                1000
+                            </button>
+                            <button class="btn btn-secondary" data-amount="5000">
+                                <i class="fas fa-plus"></i>
+                                5000
+                            </button>
+                            <button class="btn btn-secondary" data-amount="10000">
+                                <i class="fas fa-plus"></i>
+                                10000
+                            </button>
+                        </div>
+                        <button class="btn btn-primary btn-large" id="placeBidBtn">
+                            <i class="fas fa-gavel"></i>
+                            Поставить <span id="bidAmountDisplay">0</span> руб.
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Top 5 Bids -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-ranking-star"></i>
+                        ТОП-5 ставок
+                    </h3>
+                    <div class="bids-list" id="topBids">
+                        <div class="empty-state">
+                            <i class="fas fa-inbox"></i>
+                            <p>Ставок пока нет</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profile Page -->
+            <div id="profilePage" class="page" style="display: none;">
+                <!-- User Info Card -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-user"></i>
+                        Профиль пользователя
+                    </h3>
+                    <div class="profile-info">
+                        <div class="profile-item">
+                            <i class="fas fa-user-circle"></i>
+                            <div>
+                                <div class="profile-label">Username</div>
+                                <div class="profile-value" id="profileUsername">Не установлен</div>
+                            </div>
+                        </div>
+                        <div class="profile-item">
+                            <i class="fas fa-wallet"></i>
+                            <div>
+                                <div class="profile-label">Баланс (RUB)</div>
+                                <div class="profile-value" id="profileBalance">0 руб.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Up Form -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-credit-card"></i>
+                        Пополнение баланса
+                    </h3>
+                    <div class="form-group">
+                        <label for="topupAmount">Сумма пополнения (руб.)</label>
+                        <input type="number" id="topupAmount" class="form-input" placeholder="Введите сумму" min="0">
+                    </div>
+                    <button class="btn btn-primary" id="topupBtn">
+                        <i class="fas fa-plus"></i>
+                        Пополнить баланс
+                    </button>
+                </div>
+
+                <!-- Bids History -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-history"></i>
+                        История ставок
+                    </h3>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Раунд</th>
+                                    <th>Сумма</th>
+                                    <th>Время</th>
+                                    <th>Статус</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bidsHistory">
+                                <tr>
+                                    <td colspan="4" class="empty-cell">
+                                        <i class="fas fa-inbox"></i>
+                                        История пуста
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Transactions History -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-exchange-alt"></i>
+                        История транзакций
+                    </h3>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Тип</th>
+                                    <th>Сумма</th>
+                                    <th>Время</th>
+                                </tr>
+                            </thead>
+                            <tbody id="transactionsHistory">
+                                <tr>
+                                    <td colspan="3" class="empty-cell">
+                                        <i class="fas fa-inbox"></i>
+                                        История пуста
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Page -->
+            <div id="adminPage" class="page" style="display: none;">
+                <!-- Warning -->
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Developer Mode</strong> - Эта панель только для администраторов
+                </div>
+
+                <!-- Create Auction Form -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-plus-circle"></i>
+                        Создать аукцион
+                    </h3>
+                    <div class="form-group">
+                        <label for="auctionCode">Код аукциона</label>
+                        <input type="text" id="auctionCode" class="form-input" placeholder="MAIN_AUCTION">
+                    </div>
+                    <div class="form-group">
+                        <label for="auctionTitle">Название аукциона</label>
+                        <input type="text" id="auctionTitle" class="form-input" placeholder="Главный аукцион" value="Главный аукцион">
+                    </div>
+                    <div class="form-group">
+                        <label for="lotsCount">Количество победителей в раунде <small style="color: #666;">(топ-N участников)</small></label>
+                        <input type="number" id="lotsCount" class="form-input" value="5" min="1">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">Сколько участников получат приз в каждом раунде (обычно 5)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="minIncrement">Минимальный шаг ставки (руб.)</label>
+                        <input type="number" id="minIncrement" class="form-input" value="100" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="auctionDuration">Длительность раунда (минуты) <small style="color: #666;">(время на размещение ставок)</small></label>
+                        <input type="number" id="auctionDuration" class="form-input" value="5" min="1">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">Время на размещение ставок в каждом раунде (60 минут)</small>
+                    </div>
+                    <button class="btn btn-primary" id="createAuctionBtn">
+                        <i class="fas fa-rocket"></i>
+                        Создать аукцион
+                    </button>
+                </div>
+
+                <!-- Control Buttons -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-sliders-h"></i>
+                        Управление аукционом
+                    </h3>
+                    <button class="btn btn-danger btn-large" id="finishAuctionBtn">
+                        <i class="fas fa-stop"></i>
+                        Завершить текущий аукцион
+                    </button>
+                </div>
+
+                <!-- Statistics -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-chart-bar"></i>
+                        Статистика аукциона
+                    </h3>
+                    <div class="stats-grid" id="statsGrid">
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-gavel"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-label">Всего ставок</div>
+                                <div class="stat-value" id="statTotalBids">0</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-label">Участников</div>
+                                <div class="stat-value" id="statParticipants">0</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-dollar-sign"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-label">Общая сумма</div>
+                                <div class="stat-value" id="statTotalAmount">0 руб.</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-trophy"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-label">Победителей</div>
+                                <div class="stat-value" id="statWinners">0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+        <i class="fas fa-check-circle"></i>
+        <span id="toastMessage">Успешно!</span>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

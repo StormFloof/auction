@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: contest-auction-mongo
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - contest_auction_mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: |
+        mongosh --quiet --eval "
+          try {
+            rs.status();
+            quit(0);
+          } catch(e) {
+            quit(1);
+          }
+        "
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - auction-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: contest-auction-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongo:27017/contest-auction?replicaSet=rs0
+      - PORT=3000
+      - WORKER_INLINE=0
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - auction-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: contest-auction-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment:
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongo:27017/contest-auction?replicaSet=rs0
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - auction-net
+
+  reconcile:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: contest-auction-reconcile
+    restart: unless-stopped
+    command: ["node", "dist/worker-reconcile.js"]
+    environment:
+      - NODE_ENV=production
+      - MONGO_URI=mongodb://mongo:27017/contest-auction?replicaSet=rs0
+      - RECONCILE_INTERVAL_MS=300000
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - auction-net
+
+  mongo-express:
+    image: mongo-express:1
+    container_name: contest-auction-mongo-express
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "8081:8081"
+    networks:
+      - auction-net
+
+networks:
+  auction-net:
+    driver: bridge
+
+volumes:
+  contest_auction_mongo_data:

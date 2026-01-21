@@ -1,0 +1,44 @@
+{
+  "name": "contest-auction",
+  "version": "0.0.1",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "worker": "tsx src/worker.ts",
+    "reconcile": "tsx src/worker-reconcile.ts",
+    "bots": "tsx src/bots/runBots.ts",
+    "load": "k6 run ./load/k6.js",
+    "load:sniping": "MODE=anti_sniping k6 run ./load/k6.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
+    "start:reconcile": "node dist/worker-reconcile.js",
+    "start:all": "tsx scripts/start-all.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "lint": "echo \"lint: not configured yet\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^9.0.0",
+    "@fastify/static": "^7.0.4",
+    "@fastify/type-provider-typebox": "^4.0.0",
+    "@sinclair/typebox": "^0.33.20",
+    "decimal.js": "^10.4.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^4.28.1",
+    "mongoose": "^8.10.1",
+    "prom-client": "^15.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "mongodb-memory-server": "^10.1.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
