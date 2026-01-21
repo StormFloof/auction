@@ -30,7 +30,7 @@
     "@sinclair/typebox": "^0.33.20",
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.7",
-    "fastify": "^4.28.1",
+    "fastify": "^5.7.1",
     "mongoose": "^8.10.1",
     "prom-client": "^15.1.3"
   },
