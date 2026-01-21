@@ -327,12 +327,21 @@ const updateBidFormValidation = () => {
         canPlaceBid = false;
     }
     
-    // Проверка баланса
+    // Получаем текущую ставку пользователя (если есть)
+    const userId = user?.userId;
+    const leaders = auction?.leaders || [];
+    const myBid = leaders.find(l => l.participantId === userId);
+    const currentBidAmount = myBid ? parseInt(myBid.amount) : 0;
+    
+    // Вычисляем дельту (доплату)
+    const delta = Math.max(0, bidAmount - currentBidAmount);
+    
+    // Проверка баланса (требуется только delta, а не полная сумма!)
     const balance = user?.account?.available || 0;
-    if (bidAmount > balance) {
+    if (delta > balance) {
         warnings.push({
             type: 'error',
-            text: `❌ Недостаточно средств. Доступно: ${balance} руб.`
+            text: `❌ Недостаточно средств. Нужно доплатить: ${delta} руб., доступно: ${balance} руб.`
         });
         canPlaceBid = false;
     } else if (balance < 100) {
@@ -343,7 +352,6 @@ const updateBidFormValidation = () => {
     }
     
     // Показываем минимальную ставку если есть лидеры
-    const leaders = auction?.leaders || [];
     if (leaders.length > 0) {
         const topBid = parseInt(leaders[0].amount) || 0;
         // Предполагаем minIncrement = 100 (можно получить из конфига аукциона)
@@ -402,19 +410,26 @@ const handlePlaceBid = async () => {
         return;
     }
     
-    // Проверка баланса перед отправкой
+    // Проверка баланса перед отправкой (delta-based)
     const user = state.currentUser;
     const balance = user?.account?.available || 0;
+    const auction = state.currentAuction?.auction;
     
-    if (amount > balance) {
-        showToast(`Недостаточно средств. Доступно: ${balance} руб. Пополните баланс`, 'error');
+    // Получаем текущую ставку пользователя
+    const userId = user?.userId;
+    const leaders = auction?.leaders || [];
+    const myBid = leaders.find(l => l.participantId === userId);
+    const currentBidAmount = myBid ? parseInt(myBid.amount) : 0;
+    const delta = Math.max(0, amount - currentBidAmount);
+    
+    if (delta > balance) {
+        showToast(`Недостаточно средств. Нужно доплатить: ${delta} руб., доступно: ${balance} руб. Пополните баланс`, 'error');
         // Переключаемся на профиль для пополнения
         setTimeout(() => navigate('/profile'), 2000);
         return;
     }
     
     // Проверка активности аукциона
-    const auction = state.currentAuction?.auction;
     if (!auction || auction.status !== 'active') {
         showToast('Аукцион завершен, размещение ставок невозможно', 'error');
         return;

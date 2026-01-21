@@ -66,6 +66,49 @@ describe('auctions', () => {
     expect(parseFloat(b2.account?.available || '0')).toBe(75);
   });
 
+  it('should allow raising bid with delta payment (real scenario)', async () => {
+    const a = await auctions.createAuction({
+      code: 'DELTA_TEST',
+      title: 't',
+      lotsCount: 1,
+      currency: 'RUB',
+      minIncrement: '100',
+      topK: 10,
+      roundDurationSec: 60,
+    });
+    await auctions.startAuction(a.id);
+
+    // Пополняем баланс: 330000 руб
+    await ledger.deposit('user1', '330000', 'RUB', 'dep:user1');
+
+    // Делаем ставку 270000
+    const bid1 = await auctions.placeBid(a.id, { participantId: 'user1', amount: '270000', idempotencyKey: 'k1' });
+    if ('statusCode' in bid1) throw new Error(bid1.message);
+    
+    // Проверяем: held=270000, available=60000
+    expect(parseFloat(bid1.account?.held || '0')).toBe(270000);
+    expect(parseFloat(bid1.account?.available || '0')).toBe(60000);
+
+    // Другой пользователь делает ставку 270300 (становится лидером)
+    await ledger.deposit('user2', '300000', 'RUB', 'dep:user2');
+    const bid2 = await auctions.placeBid(a.id, { participantId: 'user2', amount: '270300', idempotencyKey: 'k1' });
+    if ('statusCode' in bid2) throw new Error(bid2.message);
+
+    // user1 хочет повысить до 270400 (минимум = 270300 + 100)
+    // Дельта = 270400 - 270000 = 400
+    // У него available = 60000 (достаточно!)
+    const bid3 = await auctions.placeBid(a.id, { participantId: 'user1', amount: '270400', idempotencyKey: 'k2' });
+    
+    // Должно УСПЕШНО пройти (не должно требовать 270400, только дельту 400)
+    if ('statusCode' in bid3) {
+      throw new Error(`Ставка должна пройти! Ошибка: ${bid3.message}`);
+    }
+    
+    expect(bid3.accepted).toBe(true);
+    expect(parseFloat(bid3.account?.held || '0')).toBe(270400); // новый hold
+    expect(parseFloat(bid3.account?.available || '0')).toBe(59600); // 60000 - 400
+  });
+
   it('closeCurrentRound: выбывшим release до нуля', async () => {
     const a = await auctions.createAuction({
       code: 'A3',
