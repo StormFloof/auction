@@ -32,7 +32,11 @@ function shouldFallbackToStandalone(err: unknown, uri: string): boolean {
 export async function connectMongo(): Promise<void> {
   if (isConnected) return;
 
-  const defaultUri = 'mongodb://127.0.0.1:27017/contest-auction?replicaSet=rs0';
+  // В production (Railway) не используем replica set по умолчанию
+  const isProduction = process.env.NODE_ENV === 'production';
+  const defaultUri = isProduction
+    ? 'mongodb://127.0.0.1:27017/contest-auction'
+    : 'mongodb://127.0.0.1:27017/contest-auction?replicaSet=rs0';
   const defaultDbName = 'contest-auction';
 
   const uri = process.env.MONGODB_URI ?? defaultUri;
