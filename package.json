@@ -22,6 +22,9 @@
   },
   "dependencies": {
     "@fastify/cookie": "^9.0.0",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^7.0.4",
     "@fastify/type-provider-typebox": "^4.0.0",
     "@sinclair/typebox": "^0.33.20",

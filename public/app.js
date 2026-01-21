@@ -17,6 +17,13 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => document.querySelectorAll(selector);
 
+// XSS Protection Helper
+const escapeHtml = (text) => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+};
+
 const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -132,9 +139,9 @@ const updateUserDisplay = () => {
     if (!user) return;
     
     const balance = user.account?.available || user.balance || 0;
-    $('username').textContent = user.username || user.userId || 'Гость';
-    $('profileUsername').textContent = user.username || user.userId || 'Не установлен';
-    $('profileBalance').textContent = `${balance} руб.`;
+    $('username').textContent = escapeHtml(user.username || user.userId || 'Гость');
+    $('profileUsername').textContent = escapeHtml(user.username || user.userId || 'Не установлен');
+    $('profileBalance').textContent = `${escapeHtml(String(balance))} руб.`;
 };
 
 const updateAuctionDisplay = () => {
@@ -144,7 +151,7 @@ const updateAuctionDisplay = () => {
     const auctionData = auction.auction;
     
     // Prize title
-    $('prizeTitle').textContent = auctionData.title || 'Приз участникам топ-5';
+    $('prizeTitle').textContent = escapeHtml(auctionData.title || 'Приз участникам топ-5');
     
     // Round number with winners info
     const lotsCount = auctionData.lotsCount || 5;
@@ -227,9 +234,9 @@ const updateTopBidsDisplay = () => {
         <div class="bid-item rank-${index + 1}">
             <div class="bid-user">
                 <div class="bid-rank">${index + 1}</div>
-                <span>${leader.participantId || `Участник ${index + 1}`}</span>
+                <span>${escapeHtml(leader.participantId || `Участник ${index + 1}`)}</span>
             </div>
-            <div class="bid-amount">${leader.amount || 0} руб.</div>
+            <div class="bid-amount">${escapeHtml(String(leader.amount || 0))} руб.</div>
         </div>
     `).join('');
 };
@@ -252,9 +259,9 @@ const updateMyBidsDisplay = () => {
     
     tbody.innerHTML = bids.map(bid => `
         <tr>
-            <td>${bid.roundNo || '-'}</td>
-            <td>${bid.amount || 0} руб.</td>
-            <td>${formatDate(bid.createdAt)}</td>
+            <td>${escapeHtml(String(bid.roundNo || '-'))}</td>
+            <td>${escapeHtml(String(bid.amount || 0))} руб.</td>
+            <td>${escapeHtml(formatDate(bid.createdAt))}</td>
             <td>
                 <span class="status-badge status-placed">
                     Размещена

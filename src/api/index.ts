@@ -1,5 +1,8 @@
 import { type FastifyInstance } from 'fastify';
 import { randomBytes } from 'crypto';
+import rateLimit from '@fastify/rate-limit';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
 
 import { auctionsRoutes } from './routes/auctions';
 import { accountsRoutes } from './routes/accounts';
@@ -15,6 +18,35 @@ function generateUserId(): string {
 
 export async function apiPlugin(app: FastifyInstance) {
   const ledger = new LedgerService();
+
+  // Security: Helmet - защита заголовков
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+      }
+    }
+  });
+
+  // Security: CORS
+  await app.register(cors, {
+    origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+    credentials: true
+  });
+
+  // Security: Rate limiting (100 запросов за 15 минут)
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '15 minutes',
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: 'Too many requests from this IP, please try again later'
+    })
+  });
 
   // Middleware для автоматической аутентификации для всех API роутов
   app.addHook('onRequest', async (req, reply) => {
