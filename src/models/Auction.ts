@@ -37,7 +37,9 @@ export interface IAuction {
   _id: mongoose.Types.ObjectId;
   code: string;
   title: string;
-  lotsCount: number;
+  totalLots: number; // Общее количество призов в аукционе (ФИКСИРОВАНО)
+  lotsPerRound: number; // Количество призов раздаваемых в каждом раунде
+  lotsCount: number; // DEPRECATED: backward compatibility, используется как totalLots
   winners: string[];
   winningBids?: WinningBid[];
   roundWinners?: RoundWinner[];
@@ -93,7 +95,14 @@ export const AuctionSchema = new mongoose.Schema(
     code: { type: String, required: true },
     title: { type: String, required: true },
 
-    // кол-во лотов (этап 2): требуется для контрактов, но старые документы поддерживаем через default
+    // НОВАЯ МОДЕЛЬ (Telegram Gift Auctions):
+    // totalLots - ФИКСИРОВАННОЕ общее количество призов в аукционе
+    // lotsPerRound - сколько призов раздается в каждом раунде
+    // Аукцион заканчивается когда раздано totalLots призов
+    totalLots: { type: Number, required: false, min: 1 },
+    lotsPerRound: { type: Number, required: false, min: 1 },
+
+    // BACKWARD COMPATIBILITY: lotsCount используется если totalLots не задан
     lotsCount: { type: Number, required: true, min: 1, default: 1 },
 
     // результаты (этап 2): пока не используем в логике, только храним/отдаём

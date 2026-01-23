@@ -134,7 +134,7 @@ describe('auctions', () => {
     if ('statusCode' in b3) throw new Error(b3.message);
 
     const close = await auctions.closeCurrentRound(a.id);
-    if (!close || 'statusCode' in close) throw new Error('close failed');
+    if (!close || 'statusCode' in close || 'status' in close) throw new Error('close failed');
 
     // НОВАЯ МЕХАНИКА: топ-1 (u2) выигрывает и выбывает, остальные (u1, u3) продолжают
     expect(close.qualified.sort()).toEqual(['u1', 'u3'].sort());
@@ -241,7 +241,7 @@ describe('auctions', () => {
     for (const r of [b11, b12, b2, b3]) if ('statusCode' in r) throw new Error(r.message);
 
     const close1 = await auctions.closeCurrentRound(a.id);
-    if (!close1 || 'statusCode' in close1) throw new Error('close1 failed');
+    if (!close1 || 'statusCode' in close1 || 'status' in close1) throw new Error('close1 failed');
     // НОВАЯ МЕХАНИКА: топ-1 (u2=60) выигрывает и выбывает, остальные (u1=40, u3=50) продолжают
     expect(close1.qualified.sort()).toEqual(['u1', 'u3'].sort());
 
@@ -256,7 +256,7 @@ describe('auctions', () => {
     if ('statusCode' in b22) throw new Error(b22.message);
 
     const close2 = await auctions.closeCurrentRound(a.id);
-    if (!close2 || 'statusCode' in close2) throw new Error('close2 failed');
+    if (!close2 || 'statusCode' in close2 || 'status' in close2) throw new Error('close2 failed');
     expect(close2.winners).toEqual(['u3']); // u3 побеждает раунд 2
 
     const u1 = await ledger.getAccount('u1', 'RUB');
@@ -301,21 +301,22 @@ describe('auctions', () => {
     for (const r of [b1, b2, b3]) if ('statusCode' in r) throw new Error(r.message);
 
     const close1 = await auctions.closeCurrentRound(a.id);
-    if (!close1 || 'statusCode' in close1) throw new Error('close1 failed');
+    if (!close1 || 'statusCode' in close1 || 'status' in close1) throw new Error('close1 failed');
     // НОВАЯ МЕХАНИКА: топ-1 (u2=20) выигрывает и выбывает, u1=10 и u3=15 продолжают
     expect(close1.qualified.sort()).toEqual(['u1', 'u3'].sort());
 
-    // round 2: no bids at all от u1 и u3 - при закрытии раунда аукцион финализируется с пустым qualified
+    // round 2: no bids at all от u1 и u3 - при закрытии раунда аукцион финализируется
+    // НОВАЯ ЛОГИКА: ставки из раунда 1 автоматически переносятся в раунд 2!
     const close2 = await auctions.closeCurrentRound(a.id);
-    if (!close2 || 'statusCode' in close2) throw new Error('close2 failed');
+    if (!close2 || 'statusCode' in close2 || 'status' in close2) throw new Error('close2 failed');
 
-    // Аукцион завершился, но без ставок в раунде 2 - никто не выигрывает
-    expect(close2.winners).toEqual([]);
+    // u3 выигрывает финал (его ставка 15 из раунда 1 больше чем 10 у u1)
+    expect(close2.winners).toEqual(['u3']);
 
     const u1Acc = await ledger.getAccount('u1', 'RUB');
     const u2Acc = await ledger.getAccount('u2', 'RUB');
     const u3Acc = await ledger.getAccount('u3', 'RUB');
-    // u1 и u3 получили release
+    // u1 получил release (проиграл)
     expect(parseFloat(u1Acc?.total || '0')).toBe(100);
     expect(parseFloat(u1Acc?.held || '0')).toBe(0);
     expect(parseFloat(u1Acc?.available || '0')).toBe(100);
@@ -323,9 +324,10 @@ describe('auctions', () => {
     expect(parseFloat(u2Acc?.total || '0')).toBe(80); // 100 - 20
     expect(parseFloat(u2Acc?.held || '0')).toBe(0);
     expect(parseFloat(u2Acc?.available || '0')).toBe(80);
-    expect(parseFloat(u3Acc?.total || '0')).toBe(100);
+    // u3 получил capture (выиграл финал по ставке из раунда 1)
+    expect(parseFloat(u3Acc?.total || '0')).toBe(85); // 100 - 15
     expect(parseFloat(u3Acc?.held || '0')).toBe(0);
-    expect(parseFloat(u3Acc?.available || '0')).toBe(100);
+    expect(parseFloat(u3Acc?.available || '0')).toBe(85);
   });
 
   it('cancelAuction: отмена активного аукциона с возвратом hold\'ов', async () => {

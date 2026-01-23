@@ -150,22 +150,32 @@ async function processOnce(): Promise<{ processed: number }>
 
       processed++;
       backoff.delete(auctionId);
-      log('info', '[worker] round closed', {
-        auctionId,
-        closedRoundNo: res.closedRoundNo,
-        nextRoundNo: res.nextRoundNo,
-        finishedAt: res.finishedAt,
-      });
+      
+      if ('status' in res) {
+        // CancelAuctionOk
+        log('info', '[worker] auction cancelled', {
+          auctionId,
+          released: res.released.length,
+        });
+      } else {
+        // CloseRoundOk
+        log('info', '[worker] round closed', {
+          auctionId,
+          closedRoundNo: res.closedRoundNo,
+          nextRoundNo: res.nextRoundNo,
+          finishedAt: res.finishedAt,
+        });
 
-      // Если аукцион завершился (finishedAt присутствует) и это главный аукцион - запускаем новый
-      if (res.finishedAt && a.code === AUCTION_CODE) {
-        log('info', '[worker] главный аукцион завершен, создаем новый', { auctionId });
+        // Если аукцион завершился (finishedAt присутствует) и это главный аукцион - запускаем новый
+        if (res.finishedAt && a.code === AUCTION_CODE) {
+          log('info', '[worker] главный аукцион завершен, создаем новый', { auctionId });
         // Даем небольшую задержку перед созданием нового
-        setTimeout(() => {
-          ensureActiveAuction().catch((err) => {
-            log('error', '[worker] ошибка при перезапуске аукциона', { err: toErrorMeta(err) });
-          });
-        }, 2000);
+          setTimeout(() => {
+            ensureActiveAuction().catch((err) => {
+              log('error', '[worker] ошибка при перезапуске аукциона', { err: toErrorMeta(err) });
+            });
+          }, 2000);
+        }
       }
     } catch (e) {
       const cls = classifyCloseError(e);

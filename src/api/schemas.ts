@@ -15,3 +15,8 @@ export const ObjectIdParam = Type.String({
 
 export const LotsCount = Type.Number({ minimum: 1 });
 
+export const PaginationQuerySchema = Type.Object({
+  page: Type.Optional(Type.Integer({ minimum: 1, default: 1 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 }))
+});
+

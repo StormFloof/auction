@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { randomBytes } from 'crypto';
-import rateLimit from '@fastify/rate-limit';
+// import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 
@@ -37,16 +37,16 @@ export async function apiPlugin(app: FastifyInstance) {
     credentials: true
   });
 
-  // Security: Rate limiting (100 запросов за 15 минут)
-  await app.register(rateLimit, {
-    max: 100,
-    timeWindow: '15 minutes',
-    errorResponseBuilder: () => ({
-      statusCode: 429,
-      error: 'Too Many Requests',
-      message: 'Too many requests from this IP, please try again later'
-    })
-  });
+  // Security: Rate limiting (отключен для демо)
+  // await app.register(rateLimit, {
+  //   max: 100,
+  //   timeWindow: '15 minutes',
+  //   errorResponseBuilder: () => ({
+  //     statusCode: 429,
+  //     error: 'Too Many Requests',
+  //     message: 'Too many requests from this IP, please try again later'
+  //   })
+  // });
 
   // Middleware для автоматической аутентификации для всех API роутов
   app.addHook('onRequest', async (req, reply) => {

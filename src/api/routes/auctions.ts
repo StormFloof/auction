@@ -1,7 +1,8 @@
 import { Type } from '@sinclair/typebox';
 import { type FastifyInstance } from 'fastify';
+import validator from 'validator';
 
-import { Amount, Currency, LotsCount, ObjectIdParam } from '../schemas';
+import { Amount, Currency, LotsCount, ObjectIdParam, PaginationQuerySchema } from '../schemas';
 import { AuctionService } from '../../modules/auctions/service';
 import { sendError } from '../../shared/http';
 import { AuctionModel, BidModel } from '../../models';
@@ -49,6 +50,12 @@ export async function auctionsRoutes(app: FastifyInstance) {
         body: Type.Object({
           amount: Amount,
         }),
+      },
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: '1 minute',
+        },
       },
     },
     async (req, reply) => {
@@ -101,6 +108,115 @@ export async function auctionsRoutes(app: FastifyInstance) {
     }
   });
 
+  // GET /api/auction/my-wins - получить выигрыши текущего пользователя
+  app.get('/auction/my-wins', async (req, reply) => {
+    const userId = (req as { userId?: string }).userId;
+    if (!userId) return sendError(reply, 401, 'Unauthorized', 'not authenticated');
+
+    try {
+      const wins = await service.getParticipantWins(userId);
+      return reply.send({ wins });
+    } catch (e) {
+      return sendError(reply, 500, 'InternalError', (e as Error).message);
+    }
+  });
+
+  // GET /api/auction/history - получить список завершенных аукционов с пагинацией
+  app.get('/auction/history', {
+    schema: {
+      querystring: PaginationQuerySchema
+    }
+  }, async (req, reply) => {
+    try {
+      // Отключаем кеширование для динамических данных
+      reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+      reply.header('Pragma', 'no-cache');
+      reply.header('Expires', '0');
+
+      const query = req.query as { page?: number; limit?: number };
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 20;
+      const skip = (page - 1) * limit;
+
+      // Подсчитываем общее количество завершенных аукционов
+      const total = await AuctionModel.countDocuments({ status: 'finished' });
+
+      // Получаем аукционы с пагинацией
+      const auctions = await AuctionModel.find({ status: 'finished' })
+        .sort({ finishedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const result = auctions.map((a) => ({
+        _id: a._id.toString(),
+        title: a.title,
+        description: a.title,
+        prizeAmount: a.totalLots ?? a.lotsCount ?? 1,
+        status: a.status,
+        startTime: a.startsAt?.toISOString(),
+        endTime: a.finishedAt?.toISOString(),
+        winners: a.winners,
+        winnersCount: a.winners.length,
+      }));
+
+      const totalPages = Math.ceil(total / limit);
+
+      return reply.send({
+        auctions: result,
+        total,
+        page,
+        limit,
+        totalPages
+      });
+    } catch (e) {
+      return sendError(reply, 500, 'InternalError', (e as Error).message);
+    }
+  });
+
+  // GET /api/auction/:id - получить подробную информацию об аукционе
+  app.get(
+    '/auction/:id',
+    {
+      schema: {
+        params: Type.Object({ id: ObjectIdParam }),
+      },
+    },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+
+      try {
+        // Отключаем кеширование для динамических данных
+        reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+        reply.header('Pragma', 'no-cache');
+        reply.header('Expires', '0');
+
+        const auction = await AuctionModel.findById(id).lean();
+        if (!auction) return sendError(reply, 404, 'NotFound', 'auction not found');
+
+        function toPlainObject(obj: any): any {
+          if (!obj) return obj;
+          if (Array.isArray(obj)) return obj.map(toPlainObject);
+          if (typeof obj === 'object' && obj.constructor === Object) {
+            const result: any = {};
+            for (const key in obj) {
+              result[key] = toPlainObject(obj[key]);
+            }
+            return result;
+          }
+          if (obj._bsontype === 'Decimal128') return obj.toString();
+          if (obj instanceof Date) return obj.toISOString();
+          if (obj._bsontype === 'ObjectId') return obj.toString();
+          return obj;
+        }
+
+        return reply.send({ auction: toPlainObject(auction) });
+      } catch (e) {
+        return sendError(reply, 400, 'BadRequest', (e as Error).message);
+      }
+    }
+  );
+
   // ============ АДМИН API ============
 
   // POST /api/admin/auction/create - создать новый аукцион
@@ -114,6 +230,7 @@ export async function auctionsRoutes(app: FastifyInstance) {
           lotsCount: LotsCount,
           roundDurationSec: Type.Optional(Type.Number({ minimum: 5 })),
           minIncrement: Amount,
+          maxRounds: Type.Optional(Type.Number({ minimum: 1, maximum: 10 })),
         }),
       },
     },
@@ -125,17 +242,33 @@ export async function auctionsRoutes(app: FastifyInstance) {
           lotsCount: number;
           roundDurationSec?: number;
           minIncrement: string | number;
+          maxRounds?: number;
         };
 
+        // Санитизация пользовательских данных
+        const sanitizedTitle = validator.escape(validator.trim(body.title));
+        const sanitizedCode = validator.escape(validator.trim(body.code));
+
+        // Проверка валидности после санитизации
+        if (!sanitizedTitle || sanitizedTitle.length === 0) {
+          return sendError(reply, 400, 'BadRequest', 'title cannot be empty');
+        }
+        if (!sanitizedCode || sanitizedCode.length === 0) {
+          return sendError(reply, 400, 'BadRequest', 'code cannot be empty');
+        }
+        if (sanitizedTitle.length > 200) {
+          return sendError(reply, 400, 'BadRequest', 'title must not exceed 200 characters');
+        }
+
         const created = await service.createAuction({
-          code: body.code,
-          title: body.title,
+          code: sanitizedCode,
+          title: sanitizedTitle,
           lotsCount: body.lotsCount,
           currency: 'RUB',
           roundDurationSec: body.roundDurationSec ?? 3600,
           minIncrement: body.minIncrement,
           topK: 10,
-          maxRounds: 5,
+          maxRounds: body.maxRounds ?? 5,
           snipingWindowSec: 10,
           extendBySec: 10,
           maxExtensionsPerRound: 10,
@@ -230,22 +363,41 @@ export async function auctionsRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       try {
-        const created = await service.createAuction(
-          req.body as {
-            code: string;
-            title: string;
-            lotsCount: number;
-            currency?: string;
+        const body = req.body as {
+          code: string;
+          title: string;
+          lotsCount: number;
+          currency?: string;
 
-            autoParticipants?: { enabled?: boolean; strategy?: 'calm' | 'aggressive'; count?: number; tickMs?: number };
-            roundDurationSec?: number;
-            minIncrement: string | number;
-            topK?: number;
-            snipingWindowSec?: number;
-            extendBySec?: number;
-            maxExtensionsPerRound?: number;
-          }
-        );
+          autoParticipants?: { enabled?: boolean; strategy?: 'calm' | 'aggressive'; count?: number; tickMs?: number };
+          roundDurationSec?: number;
+          minIncrement: string | number;
+          topK?: number;
+          snipingWindowSec?: number;
+          extendBySec?: number;
+          maxExtensionsPerRound?: number;
+        };
+
+        // Санитизация пользовательских данных
+        const sanitizedTitle = validator.escape(validator.trim(body.title));
+        const sanitizedCode = validator.escape(validator.trim(body.code));
+
+        // Проверка валидности после санитизации
+        if (!sanitizedTitle || sanitizedTitle.length === 0) {
+          return sendError(reply, 400, 'BadRequest', 'title cannot be empty');
+        }
+        if (!sanitizedCode || sanitizedCode.length === 0) {
+          return sendError(reply, 400, 'BadRequest', 'code cannot be empty');
+        }
+        if (sanitizedTitle.length > 200) {
+          return sendError(reply, 400, 'BadRequest', 'title must not exceed 200 characters');
+        }
+
+        const created = await service.createAuction({
+          ...body,
+          code: sanitizedCode,
+          title: sanitizedTitle,
+        });
         return reply.status(201).send(created);
       } catch (e) {
         const msg = (e as Error).message;
@@ -336,6 +488,22 @@ export async function auctionsRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const id = (req.params as { id: string }).id;
       const res = await service.closeCurrentRound(id);
+      if (!res) return sendError(reply, 404, 'NotFound', 'auction not found');
+      if ('error' in res) return sendError(reply, res.statusCode, res.error, res.message);
+      return reply.send(res);
+    }
+  );
+
+  app.post(
+    '/auctions/:id/rounds/skip',
+    {
+      schema: {
+        params: Type.Object({ id: ObjectIdParam }),
+      },
+    },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const res = await service.skipRoundWithRefund(id);
       if (!res) return sendError(reply, 404, 'NotFound', 'auction not found');
       if ('error' in res) return sendError(reply, res.statusCode, res.error, res.message);
       return reply.send(res);

@@ -136,14 +136,15 @@ flowchart TD
 
 Закрытие происходит в [`AuctionService.closeCurrentRound()`](contest-auction/src/modules/auctions/service.ts:381):
 
-1) Получение топ-K лидеров и квалифицированных участников
-2) Для каждого участника, у которого есть ставка:
-   - если он qualified → `capture` hold (balance-=amount, hold-=amount): [`LedgerService.captureHold()`](contest-auction/src/modules/ledger/service.ts:80)
-   - иначе → `release` hold (hold-=amount): [`LedgerService.releaseHold()`](contest-auction/src/modules/ledger/service.ts:68)
-3) Транзакционный условный апдейт аукциона (защита от гонок)
-4) Либо переход на следующий раунд, либо завершение
+1) Получение топ-`lotsCount` участников (победители раунда)
+2) Для победителей раунда:
+   - `capture` hold (balance-=amount, hold-=amount): [`LedgerService.captureHold()`](contest-auction/src/modules/ledger/service.ts:80)
+   - участник получает приз и ВЫБЫВАЕТ из аукциона
+3) Проверка условия завершения: `lotsDistributed >= totalLots`
+4) Если завершение → финализация (release hold оставшимся участникам)
+5) Иначе → переход на следующий раунд с carry-over ставок
 
-> Важно для аудита: в текущей реализации списание происходит **на закрытии каждого раунда** (capture qualified), а не только на финализации аукциона. Это может расходиться с допущением в [`docs/spec.md`](docs/spec.md:130).
+> Важно для аудита: **Открытая система** — новые участники могут входить в любой раунд. Ставки автоматически переносятся между раундами (carry-over).
 
 ---
 
@@ -275,21 +276,23 @@ Round (embedded) хранит:
 - стартовать через [`POST /api/auctions/:id/start`](contest-auction/src/api/routes/auctions.ts:53)
 - убедиться, что `roundEndsAt` уходит вперёд на `roundDurationSec`
 
-### 5.3. Отсев по top-K (eligibility)
+### 5.3. Открытая система раундов (без eligibility)
 
-Спецификация: топ-K проходят дальше; остальные теряют право ставить дальше — [`3.3 Кто проходит дальше`](docs/spec.md:55).
+**ВАЖНО:** Текущая реализация использует открытую систему — новые участники могут входить в любой раунд.
 
 Реализация:
 
-- список `qualified` рассчитывается в [`AuctionService.closeCurrentRound()`](contest-auction/src/modules/auctions/service.ts:404)
-- на следующий раунд сохраняется `currentRoundEligible = qualified` — [`$set: { currentRoundEligible: qualified }`](contest-auction/src/modules/auctions/service.ts:489)
-- при ставке проверяется eligibility в [`AuctionService.placeBid()`](contest-auction/src/modules/auctions/service.ts:248)
+- Нет ограничения по `currentRoundEligible` для новых участников
+- Топ-`lotsCount` участников получают приз в каждом раунде и ВЫБЫВАЮТ
+- Все остальные продолжают со своими ставками (carry-over)
+- Используется максимальная ставка участника за ВСЕ раунды для ранжирования
 
 Критические вопросы аудита:
 
-- Условие завершения сейчас: `qualified.length === allParticipants.length` — [`shouldFinish`](contest-auction/src/modules/auctions/service.ts:439)
-  - это означает: завершение происходит, когда **все ставившие** попали в top-K (например, участников ≤ K)
-  - нет понятия количества лотов/победителей, нет финализации по лотам
+- Условие завершения: `lotsDistributed >= totalLots` — [`shouldFinish`](contest-auction/src/modules/auctions/service.ts:439)
+  - Аукцион завершается когда розданы все призы
+  - `totalLots = lotsCount × maxRounds`
+  - Это соответствует модели Telegram Gift Auctions
 
 ### 5.4. Ранжирование ставок и tie-break
 
@@ -348,19 +351,21 @@ Round (embedded) хранит:
 
 ### 5.8. Закрытие раунда и финансовые последствия
 
-Спецификация (допущение): списания в финализации; проигравшим release — [`6.2 Когда списываем`](docs/spec.md:130), [`6.3 Когда возвращаем`](docs/spec.md:138).
+Реализация:
 
-Реализация сейчас:
+- При закрытии раунда топ-`lotsCount` участников получают `capture` (снижается balance и hold) — [`captureHold()`](contest-auction/src/modules/auctions/service.ts:425)
+- Победители раунда ВЫБЫВАЮТ из аукциона
+- Все остальные продолжают со своими ставками (carry-over)
+- При финализации оставшимся участникам делается `release` (снижается hold) — [`releaseHold()`](contest-auction/src/modules/auctions/service.ts:428)
 
-- при закрытии раунда qualified получают `capture` (снижается balance и hold) — [`captureHold()`](contest-auction/src/modules/auctions/service.ts:425)
-- неqualified получают `release` (снижается hold) — [`releaseHold()`](contest-auction/src/modules/auctions/service.ts:428)
+**Carry-over ставок:**
 
-Это означает:
+- Ставки автоматически переносятся между раундами
+- Участник НЕ обязан делать новую ставку в каждом раунде
+- Hold накапливается на протяжении всех раундов
+- Используется максимальная ставка по всем раундам для ранжирования
 
-- квалификация = немедленное списание, а не резерв
-- если будет несколько раундов и участник прошёл несколько раз, он может платить несколько раз, если не предусмотрен механизм «переноса платежа» (в текущей реализации такого механизма нет по дизайну)
-
-Аудитор должен зафиксировать: это осознанное архитектурное решение или требует доработки относительно продуктовой механики.
+Аудитор должен проверить: корректность carry-over и отсутствие двойного списания.
 
 ---
 
@@ -594,16 +599,41 @@ Body:
   "closedRoundNo": 1,
   "nextRoundNo": 2,
   "roundEndsAt": "2026-01-01T00:01:00.000Z",
-  "qualified": ["u1", "u2"],
+  "roundWinners": ["u1", "u2"],
   "charged": [{ "participantId": "u1", "amount": "100", "account": { "subjectId": "u1", "currency": "RUB", "total": "900", "held": "0", "available": "900" } }],
-  "released": [{ "participantId": "u3", "amount": "50", "account": { "subjectId": "u3", "currency": "RUB", "total": "1000", "held": "0", "available": "1000" } }]
+  "released": []
 }
 ```
+
+**Важно:** `charged` содержит победителей раунда (топ-`lotsCount`), `released` пуст до финализации.
 
 Ошибки:
 
 - `404 NotFound` если аукцион отсутствует — [`auction not found`](contest-auction/src/api/routes/auctions.ts:134)
 - `409 Conflict` если уже закрыт/не active — [`auction is not active`](contest-auction/src/modules/auctions/service.ts:399), [`round already closed`](contest-auction/src/modules/auctions/service.ts:464)
+
+#### `GET /api/auction/my-wins`
+
+Где: [`GET /auction/my-wins`](contest-auction/src/api/routes/auctions.ts:180)
+
+Назначение: получение выигрышей текущего участника (только завершённые аукционы).
+
+Успех `200` (пример):
+
+```json
+{
+  "wins": [
+    {
+      "auctionId": "<objectId>",
+      "auctionCode": "MAIN_AUCTION",
+      "auctionTitle": "Аукцион на приз топ-5",
+      "roundNo": 3,
+      "amount": "5000",
+      "wonAt": "2026-01-21T20:00:00.000Z"
+    }
+  ]
+}
+```
 
 ---
 
@@ -1161,26 +1191,39 @@ UI обслуживается статикой и работает в брауз
 ## 15. Модель лотов и финализация
 
 ### Концепция
-В Telegram Gift Auctions один аукцион может иметь несколько "лотов" (призов). Участники соревнуются за top-N мест, где N = количество лотов (`lotsCount`).
+В Telegram Gift Auctions один аукцион может иметь несколько "лотов" (призов). Призы раздаются постепенно в каждом раунде до исчерпания `totalLots`.
 
 ### Реализация
-- **Поле `lotsCount`** — количество призов/победителей в аукционе — [`lotsCount`](contest-auction/src/models/Auction.ts:51)
+- **Поле `lotsCount`** — количество призов в каждом раунде — [`lotsCount`](contest-auction/src/models/Auction.ts:51)
+- **Поле `maxRounds`** — максимальное количество раундов — [`maxRounds`](contest-auction/src/models/Auction.ts:52)
+- **Вычисляемое `totalLots`** — общее количество призов (`lotsCount × maxRounds`)
 - **Поле `winners`** — массив `participantId` победителей после финализации — [`winners`](contest-auction/src/models/Auction.ts:57)
 - **Поле `winningBids`** — массив объектов `{ participantId, amount }` с финальными ставками победителей — [`winningBids`](contest-auction/src/models/Auction.ts:58)
 
+### Распределение призов по раундам
+- В каждом раунде топ-`lotsCount` участников получают приз
+- Победители раунда ВЫБЫВАЮТ из аукциона (capture)
+- Все остальные продолжают со своими ставками (carry-over)
+- Новые участники могут войти в следующий раунд
+
 ### Финализация аукциона
-Происходит когда `qualified.length <= lotsCount`:
-1. Все квалифицированные участники становятся победителями
-2. Их hold конвертируется в capture (списание)
-3. Массивы `winners` и `winningBids` заполняются
+Происходит когда `lotsDistributed >= totalLots`:
+1. Все победители раундов уже получили capture (списание) при закрытии раундов
+2. Оставшимся участникам без приза делается release (возврат hold)
+3. Массивы `winners` и `winningBids` заполняются из `roundWinners`
 4. Статус меняется на `finished`
 
 Где: [`closeCurrentRound()`](contest-auction/src/modules/auctions/service.ts:381) — логика финализации в ветке `shouldFinish`
 
 ### API
 - `GET /auctions/:id` — возвращает `winners` и `winningBids` для finished аукционов — [`GET /auctions/:id`](contest-auction/src/api/routes/auctions.ts:69)
+- `GET /api/auction/my-wins` — возвращает выигрыши текущего участника — [`GET /auction/my-wins`](contest-auction/src/api/routes/auctions.ts:180)
 - `POST /auctions/:id/cancel` — отменяет аукцион и возвращает все hold'ы — [`POST /auctions/:id/cancel`](contest-auction/src/api/routes/auctions.ts:140)
 
 ### Тестирование
-Смотри тесты `'finalizes when qualified <= lotsCount'` в [`test/auctions.test.ts`](contest-auction/test/auctions.test.ts:1)
+Смотри тесты в:
+- [`test/auctions.test.ts`](contest-auction/test/auctions.test.ts:1)
+- [`test/open-system.test.ts`](contest-auction/test/open-system.test.ts:1) — открытая система раундов
+- [`test/round-carryover.test.ts`](contest-auction/test/round-carryover.test.ts:1) — carry-over ставок
+- [`test/anti-sniping-competitive.test.ts`](contest-auction/test/anti-sniping-competitive.test.ts:1) — конкурентные ставки
 

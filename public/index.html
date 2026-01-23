@@ -21,6 +21,14 @@
                         <i class="fas fa-home"></i>
                         <span>Главная</span>
                     </a>
+                    <a href="/wins" class="nav-link" data-route="/wins">
+                        <i class="fas fa-trophy"></i>
+                        <span>Выигрыши</span>
+                    </a>
+                    <a href="/history" class="nav-link" data-route="/history">
+                        <i class="fas fa-history"></i>
+                        <span>История</span>
+                    </a>
                     <a href="/profile" class="nav-link" data-route="/profile">
                         <i class="fas fa-user"></i>
                         <span>Профиль</span>
@@ -43,6 +51,32 @@
         <div class="container">
             <!-- Home Page -->
             <div id="homePage" class="page">
+                <!-- Balance Widget -->
+                <div class="balance-widget">
+                    <div class="balance-widget-header">
+                        <i class="fas fa-wallet"></i>
+                        <h3>Баланс</h3>
+                    </div>
+                    <div class="balance-items">
+                        <div class="balance-item balance-available">
+                            <div class="balance-label">Доступно</div>
+                            <div class="balance-value" id="balanceAvailable">0 ₽</div>
+                        </div>
+                        <div class="balance-item balance-held">
+                            <div class="balance-label">В холде</div>
+                            <div class="balance-value" id="balanceHeld">0 ₽</div>
+                        </div>
+                        <div class="balance-item balance-total">
+                            <div class="balance-label">Всего</div>
+                            <div class="balance-value" id="balanceTotal">0 ₽</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-balance-topup" id="quickTopupBtn">
+                        <i class="fas fa-plus"></i>
+                        Пополнить
+                    </button>
+                </div>
+
                 <!-- Prize Card -->
                 <div class="prize-card">
                     <div class="prize-icon">
@@ -113,7 +147,7 @@
                 <div class="card">
                     <h3 class="card-title">
                         <i class="fas fa-ranking-star"></i>
-                        ТОП-5 ставок
+                        ТОП-10 ставок
                     </h3>
                     <div class="bids-list" id="topBids">
                         <div class="empty-state">
@@ -222,6 +256,50 @@
                 </div>
             </div>
 
+            <!-- Wins Page -->
+            <div id="winsPage" class="page" style="display: none;">
+                <!-- Wins Header -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-trophy"></i>
+                        Мои выигрыши
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Список аукционов где вы выиграли приз
+                    </p>
+                </div>
+
+                <!-- Wins List -->
+                <div id="winsList">
+                    <div class="empty-state">
+                        <i class="fas fa-inbox"></i>
+                        <p>Пока нет побед</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Page -->
+            <div id="historyPage" class="page" style="display: none;">
+                <!-- History Header -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-history"></i>
+                        История аукционов
+                    </h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Список всех завершенных аукционов
+                    </p>
+                </div>
+
+                <!-- History List -->
+                <div id="historyList">
+                    <div class="empty-state">
+                        <i class="fas fa-inbox"></i>
+                        <p>История аукционов пуста</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Admin Page -->
             <div id="adminPage" class="page" style="display: none;">
                 <!-- Warning -->
@@ -258,10 +336,26 @@
                         <input type="number" id="auctionDuration" class="form-input" value="5" min="1">
                         <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">Время на размещение ставок в каждом раунде (60 минут)</small>
                     </div>
+                    <div class="form-group">
+                        <label for="maxRounds">Максимальное количество раундов <small style="color: #666;">(когда завершится аукцион)</small></label>
+                        <input type="number" id="maxRounds" class="form-input" value="5" min="1" max="10">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">После этого количества раундов аукцион завершится автоматически (обычно 5)</small>
+                    </div>
                     <button class="btn btn-primary" id="createAuctionBtn">
                         <i class="fas fa-rocket"></i>
                         Создать аукцион
                     </button>
+                </div>
+
+                <!-- Auction Indicators -->
+                <div class="card">
+                    <h3 class="card-title">
+                        <i class="fas fa-chart-line"></i>
+                        Состояние аукциона
+                    </h3>
+                    <div class="admin-indicators" id="auctionIndicators">
+                        <!-- Filled by JavaScript -->
+                    </div>
                 </div>
 
                 <!-- Control Buttons -->
@@ -270,10 +364,9 @@
                         <i class="fas fa-sliders-h"></i>
                         Управление аукционом
                     </h3>
-                    <button class="btn btn-danger btn-large" id="finishAuctionBtn">
-                        <i class="fas fa-stop"></i>
-                        Завершить текущий аукцион
-                    </button>
+                    <div class="admin-control-buttons" id="adminControlButtons">
+                        <!-- Filled by JavaScript -->
+                    </div>
                 </div>
 
                 <!-- Statistics -->
@@ -329,6 +422,31 @@
     <div id="toast" class="toast">
         <i class="fas fa-check-circle"></i>
         <span id="toastMessage">Успешно!</span>
+    </div>
+
+    <!-- Auction Details Modal -->
+    <div id="auctionDetailsModal" class="modal">
+        <div class="modal-content modal-large">
+            <button class="modal-close" onclick="closeAuctionDetailsModal()">
+                <i class="fas fa-times"></i>
+            </button>
+            <div id="auctionDetailsContent">
+                <!-- Content will be filled by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Congratulations Modal -->
+    <div id="congratulationsModal" class="modal">
+        <div class="modal-content modal-congratulations">
+            <div id="congratulationsContent">
+                <!-- Content will be filled by JavaScript -->
+            </div>
+            <button class="congrats-close-btn btn btn-primary btn-large">
+                <i class="fas fa-check"></i>
+                Отлично!
+            </button>
+        </div>
     </div>
 
     <script src="/app.js"></script>

@@ -3,6 +3,8 @@ import Fastify from 'fastify';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
+import fastifyHelmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import path from 'node:path';
 import { connectMongo, disconnectMongo } from './shared/db';
 import { apiPlugin } from './api';
@@ -126,7 +128,11 @@ async function main() {
               app.log.warn({ msg: '[inline-worker] closeCurrentRound: api error', auctionId, statusCode: res.statusCode, error: res.error, message: res.message });
               continue;
             }
-            app.log.info({ msg: '[inline-worker] round closed', auctionId, closedRoundNo: res.closedRoundNo, nextRoundNo: res.nextRoundNo, finishedAt: res.finishedAt });
+            if ('status' in res) {
+              app.log.info({ msg: '[inline-worker] auction cancelled', auctionId, released: res.released.length });
+            } else {
+              app.log.info({ msg: '[inline-worker] round closed', auctionId, closedRoundNo: res.closedRoundNo, nextRoundNo: res.nextRoundNo, finishedAt: res.finishedAt });
+            }
           } catch (e) {
             app.log.error({ msg: '[inline-worker] closeCurrentRound: exception', auctionId, err: (e as Error)?.message });
           }
@@ -147,6 +153,57 @@ async function main() {
   })();
 
   await app.register(fastifyCookie);
+
+  // Security headers with @fastify/helmet
+  await app.register(fastifyHelmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+  });
+
+  // Rate limiting для защиты от DoS атак
+  // Общий лимит: 200 запросов/минуту (polling делает ~60 req/min: /auction/current + /auth/me + /auction/history каждые 3 сек)
+  // Для bid endpoint отдельный лимит: 20 запросов/минуту (защита от спама ставок)
+  if (process.env.NODE_ENV !== 'test') {
+    await app.register(rateLimit, {
+      max: 10000,
+      timeWindow: '1 minute',
+      hook: 'onRequest',
+      keyGenerator: (req) => {
+        return (req.headers['x-forwarded-for'] as string) || req.ip || 'unknown';
+      },
+      errorResponseBuilder: (req, context) => {
+        app.log.warn({
+          msg: '[rate-limit] limit exceeded',
+          ip: req.ip,
+          url: req.url,
+          max: context.max,
+          after: context.after,
+        });
+        return {
+          statusCode: 429,
+          error: 'Too Many Requests',
+          message: 'Слишком много запросов. Попробуйте позже.',
+        };
+      },
+    });
+  }
 
   await app.register(fastifyStatic, {
     root: path.join(__dirname, '..', 'public'),

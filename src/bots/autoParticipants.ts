@@ -1,4 +1,4 @@
-import { AuctionModel } from '../models';
+import { AuctionModel, BidModel } from '../models';
 import { AuctionService } from '../modules/auctions/service';
 import { LedgerService } from '../modules/ledger/service';
 import { decToString } from '../shared/decimal';
@@ -85,6 +85,15 @@ class AuctionAutoParticipantsRunner {
     private readonly ledger: LedgerService
   ) {}
 
+  /**
+   * Проверяет, является ли participantId ботом.
+   * Боты создаются с префиксом "ap-"
+   */
+  private isBot(participantId: string): boolean {
+    return String(participantId).startsWith('ap-');
+  }
+
+
   start() {
     this.stop();
     this.timer = setInterval(() => {
@@ -148,7 +157,44 @@ class AuctionAutoParticipantsRunner {
     if (excludeUser) {
       const currentLeader = status.leaders?.[0]?.participantId;
       if (currentLeader && String(currentLeader) === String(excludeUser)) {
-        console.log(`[bot] skipping bid - excluded user "${excludeUser}" is current leader`);
+        return;
+      }
+    }
+
+    // Получаем все ставки в текущем раунде для проверки логики
+    const allBids = await BidModel.find({
+      auctionId: this.auctionId,
+      roundNo: status.currentRoundNo,
+      status: 'placed'
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    // ЖЕСТКАЯ ПРОВЕРКА: Проверяем, был ли уже хотя бы ОДИН переход от ЛЮБОГО пользователя к ЛЮБОМУ боту
+    let humanToBotOccurred = false;
+    for (let i = 1; i < allBids.length; i++) {
+      const prev = allBids[i - 1];
+      const curr = allBids[i];
+      
+      const prevIsUser = !this.isBot(prev.participantId);
+      const currIsBot = this.isBot(curr.participantId);
+      
+      if (prevIsUser && currIsBot) {
+        // Нашли переход: пользователь → бот
+        humanToBotOccurred = true;
+        break;
+      }
+    }
+
+    // Если последняя ставка от пользователя И уже был переход пользователь → бот,
+    // то НИКАКОЙ бот больше не может делать ставки
+    if (allBids.length > 0) {
+      const lastBid = allBids[allBids.length - 1];
+      const lastIsUser = !this.isBot(lastBid.participantId);
+      
+      if (lastIsUser && humanToBotOccurred) {
+        // Уже был переход пользователь → бот, и последняя ставка опять от пользователя
+        // Боты больше не могут перебивать - пользователей можно перебить только ОДИН раз за раунд
         return;
       }
     }

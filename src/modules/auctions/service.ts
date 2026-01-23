@@ -438,7 +438,20 @@ export class AuctionService {
     }
 
     const now = new Date();
-    await AuctionModel.updateOne(
+    
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: '[finalizeAuctionInSession] СОХРАНЯЕМ РЕЗУЛЬТАТЫ В БД',
+      auctionId: auction._id.toString(),
+      winners,
+      winningBidsCount: winningBids.length,
+      winningBids,
+      chargedCount: charged.length,
+      releasedCount: released.length,
+    }));
+    
+    const updateResult = await AuctionModel.updateOne(
       { _id: auctionId, status: 'active' },
       {
         $set: {
@@ -456,6 +469,29 @@ export class AuctionService {
       },
       { session }
     );
+    
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: '[finalizeAuctionInSession] UPDATE ВЫПОЛНЕН',
+      auctionId: auction._id.toString(),
+      matchedCount: updateResult.matchedCount,
+      modifiedCount: updateResult.modifiedCount,
+      acknowledged: updateResult.acknowledged,
+      winners,
+      winningBidsCount: winningBids.length,
+    }));
+    
+    if (updateResult.modifiedCount !== 1) {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'error',
+        msg: '[finalizeAuctionInSession] UPDATE НЕ ПРОШЕЛ!',
+        auctionId: auction._id.toString(),
+        matchedCount: updateResult.matchedCount,
+        modifiedCount: updateResult.modifiedCount,
+      }));
+    }
 
     return {
       auctionId: auction._id.toString(),
@@ -567,18 +603,28 @@ export class AuctionService {
     extendBySec?: number;
     maxExtensionsPerRound?: number;
   }): Promise<AuctionView> {
+    const maxRounds = input.maxRounds ?? 5;
+    
+    // АВТОМАТИЧЕСКИЙ РАСЧЕТ: totalLots и lotsPerRound из lotsCount
+    // lotsPerRound = lotsCount (призов в раунде)
+    // totalLots = lotsCount × maxRounds (всего призов в аукционе)
+    const lotsPerRound = input.lotsCount;
+    const totalLots = input.lotsCount * maxRounds;
+    
     const doc = await AuctionModel.create({
       code: input.code,
       title: input.title,
       status: 'draft',
       currency: input.currency ?? 'RUB',
       lotsCount: input.lotsCount,
+      totalLots,
+      lotsPerRound,
 
       autoParticipants: input.autoParticipants,
       roundDurationSec: input.roundDurationSec ?? 60,
       minIncrement: decFrom(input.minIncrement),
       topK: input.topK ?? 10,
-      maxRounds: input.maxRounds ?? 5,
+      maxRounds,
       snipingWindowSec: input.snipingWindowSec ?? 10,
       extendBySec: input.extendBySec ?? 10,
       maxExtensionsPerRound: input.maxExtensionsPerRound ?? 10,
@@ -672,7 +718,10 @@ export class AuctionService {
     if (finishedAt) res.finishedAt = new Date(finishedAt).toISOString();
 
     if (auction.currentRoundNo && auction.status === 'active') {
-      res.leaders = await this.getLeaderboard(auction._id, auction.currentRoundNo, leadersLimit);
+      // Исключаем roundWinners - они выбыли после победы
+      const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+      // ОТКРЫТАЯ СИСТЕМА: показываем всех участников с placed ставками, кроме выбывших
+      res.leaders = await this.getLeaderboard(auction._id, auction.currentRoundNo, leadersLimit, excludeParticipants, []);
     }
     return res;
   }
@@ -682,13 +731,39 @@ export class AuctionService {
     const auction = await AuctionModel.findById(id).lean();
     if (!auction) return null;
 
-    const leaders = await this.getLeaderboard(auction._id, roundNo, limit);
+    // Исключаем roundWinners - они выбыли после победы
+    const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+    // ОТКРЫТАЯ СИСТЕМА: показываем всех участников с placed ставками, кроме выбывших
+    const leaders = await this.getLeaderboard(auction._id, roundNo, limit, excludeParticipants, []);
     return { auctionId: auction._id.toString(), roundNo, leaders };
   }
 
-  private async getLeaderboard(auctionId: mongoose.Types.ObjectId, roundNo: number, limit: number): Promise<Leader[]> {
+  private async getLeaderboard(auctionId: mongoose.Types.ObjectId, roundNo: number, limit: number, excludeParticipants: string[] = [], includeOnlyParticipants: string[] = []): Promise<Leader[]> {
+    const match: Record<string, unknown> = {
+      auctionId,
+      status: 'placed',
+    };
+
+    // Комбинируем фильтры по participantId
+    const participantFilter: Record<string, unknown>[] = [];
+    
+    // Исключаем roundWinners - участников которые выбыли после победы
+    if (excludeParticipants.length > 0) {
+      participantFilter.push({ participantId: { $nin: excludeParticipants } });
+    }
+
+    // Если указан список eligible участников - показываем только их
+    if (includeOnlyParticipants.length > 0) {
+      participantFilter.push({ participantId: { $in: includeOnlyParticipants } });
+    }
+
+    // Применяем комбинированные фильтры
+    if (participantFilter.length > 0) {
+      match.$and = participantFilter;
+    }
+
     const pipeline: mongoose.PipelineStage[] = [
-      { $match: { auctionId, roundNo, status: 'placed' } },
+      { $match: match }, // НЕ фильтруем по roundNo - ставки переносятся между раундами
       { $sort: { amount: -1 as -1, createdAt: 1 as 1 } },
       {
         $group: {
@@ -768,36 +843,8 @@ export class AuctionService {
           return;
         }
 
-        if (auction.currentRoundEligible?.length) {
-          const isEligible = auction.currentRoundEligible.includes(input.participantId);
-          
-          // ДИАГНОСТИКА: логируем eligibility проверку
-          console.log(JSON.stringify({
-            ts: new Date().toISOString(),
-            level: 'info',
-            msg: '[placeBid] eligibility check',
-            auctionId: auction._id.toString(),
-            roundNo: auction.currentRoundNo,
-            participantId: input.participantId,
-            currentRoundEligible: auction.currentRoundEligible,
-            isEligible,
-            willReject: !isEligible,
-          }));
-          
-          if (!isEligible) {
-            bidsTotal.labels('rejected', 'forbidden').inc();
-            out = {
-              statusCode: 403,
-              error: 'Forbidden',
-              message: 'В этом раунде могут участвовать только проигравшие предыдущих раундов',
-              details: {
-                roundNo: auction.currentRoundNo,
-                eligibleParticipants: auction.currentRoundEligible.length
-              }
-            };
-            return;
-          }
-        }
+        // ОТКРЫТАЯ СИСТЕМА: любой может войти в любом раунде
+        // Единственное ограничение - не выиграл ранее (проверка выше)
 
         const now = new Date();
         if (now.getTime() >= auction.currentRoundEndsAt.getTime()) {
@@ -807,24 +854,6 @@ export class AuctionService {
         }
 
         const roundNo = auction.currentRoundNo;
-
-        // Текущая ставка в текущем раунде (для проверки minIncrement в рамках раунда)
-        const currentInRound = await BidModel.findOne({ auctionId, roundNo, participantId: input.participantId, status: 'placed' })
-          .sort({ amount: -1, createdAt: 1 })
-          .session(session)
-          .lean();
-
-        const currentAmountInRound = currentInRound?.amount ? decToString(currentInRound.amount) : '0';
-
-        console.log(JSON.stringify({
-          ts: new Date().toISOString(),
-          level: 'info',
-          msg: '[placeBid] current round bid',
-          auctionId: auction._id.toString(),
-          roundNo,
-          participantId: input.participantId,
-          currentRoundBid: currentAmountInRound,
-        }));
 
         // Текущая максимальная ставка по всему аукциону (для вычисления дельты холда)
         const currentInAuction = await BidModel.findOne({ auctionId, participantId: input.participantId, status: 'placed' })
@@ -846,16 +875,16 @@ export class AuctionService {
           fromRound: currentInAuction?.roundNo,
         }));
 
-        // minIncrement проверяется относительно текущего раунда
+        // minIncrement проверяется от СВОЕЙ предыдущей ставки
         const minInc = decToString(auction.minIncrement);
-        const requiredMin = add(currentAmountInRound, minInc);
+        const requiredMin = add(currentAmountInAuction, minInc);
         if (compare(newAmount, requiredMin) < 0) {
           bidsTotal.labels('rejected', 'min_increment').inc();
           out = {
             statusCode: 422,
             error: 'UnprocessableEntity',
-            message: `Ставка должна быть больше текущей на ${minInc} руб. Минимальная сумма: ${requiredMin} руб.`,
-            details: { currentAmount: currentAmountInRound, minIncrement: minInc, requiredMin },
+            message: `Ставка должна быть больше ${currentAmountInAuction} руб. + минимальный инкремент ${minInc} руб. = не менее ${requiredMin} руб.`,
+            details: { currentAmount: currentAmountInAuction, minIncrement: minInc, requiredMin },
           };
           return;
         }
@@ -871,7 +900,6 @@ export class AuctionService {
           participantId: input.participantId,
           roundNo,
           newAmount,
-          currentAmountInRound,
           currentAmountInAuction,
           deltaDec,
           deltaIsPositive: gt(deltaDec, '0'),
@@ -943,14 +971,41 @@ export class AuctionService {
         }
 
         // anti-sniping: атомарное продление effective_end_at (в рамках транзакции)
-        // правило: при ставке в последние N секунд до текущего endsAt, продлеваем endsAt на extensionSeconds,
-        // но не больше maxExtensions. Формула: max(oldEnd+extend, now+extend).
+        // правило: при КОНКУРЕНТНОЙ ставке в последние N секунд до текущего endsAt, продлеваем endsAt на extensionSeconds,
+        // но не больше maxExtensions. Конкурентная ставка = ставка которая обгоняет текущего лидера.
+        
+        // Получаем текущего лидера раунда (максимальную ставку)
+        const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+        const currentLeader = await BidModel.findOne({
+          auctionId,
+          status: 'placed',
+          participantId: { $nin: excludeParticipants }
+        })
+          .sort({ amount: -1, createdAt: 1 })
+          .session(session)
+          .lean();
+
+        const currentLeaderAmount = currentLeader?.amount ? decToString(currentLeader.amount) : '0';
+        const isCompetitiveBid = compare(newAmount, currentLeaderAmount) > 0;
+        
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: '[placeBid] anti-sniping check',
+          auctionId: auction._id.toString(),
+          participantId: input.participantId,
+          roundNo,
+          newAmount,
+          currentLeaderAmount,
+          isCompetitiveBid,
+        }));
+        
         const endsAt = auction.currentRoundEndsAt;
         const anti = this.getAntiSnipingConfig(auction);
         const winMs = Math.max(0, anti.windowSec) * 1000;
         const extendMs = Math.max(0, anti.extendSec) * 1000;
         let effectiveEndsAt = endsAt;
-        if (anti.extendSec > 0 && winMs > 0 && anti.maxExtends > 0) {
+        if (anti.extendSec > 0 && winMs > 0 && anti.maxExtends > 0 && isCompetitiveBid) {
           const candidateEndsAt = new Date(Math.max(endsAt.getTime(), now.getTime()) + extendMs);
 
           const upd = await AuctionModel.updateOne(
@@ -1066,13 +1121,14 @@ export class AuctionService {
 
   async closeCurrentRound(
     auctionIdStr: string
-  ): Promise<CloseRoundOk | ApiError | null> {
+  ): Promise<CloseRoundOk | CancelAuctionOk | ApiError | null> {
     if (!mongoose.isValidObjectId(auctionIdStr)) return null;
     const auctionId = new mongoose.Types.ObjectId(auctionIdStr);
     const session = await mongoose.startSession();
     try {
       let out:
         | CloseRoundOk
+        | CancelAuctionOk
         | ApiError
         | null = null;
 
@@ -1089,15 +1145,74 @@ export class AuctionService {
 
         const roundNo = auction.currentRoundNo;
         const maxRounds = auction.maxRounds ?? 5;
+        
+        // НОВАЯ МОДЕЛЬ: Подсчет розданных лотов
+        const lotsDistributed = (auction.roundWinners ?? []).length;
+        const totalLots = auction.totalLots ?? auction.lotsCount ?? 1;
+        const lotsPerRound = auction.lotsPerRound ?? auction.lotsCount ?? 1;
+        const lotsRemaining = totalLots - lotsDistributed;
+        
+        // BACKWARD COMPATIBILITY
         const lotCount = auction.lotsCount ?? 1;
         
-        // Получаем всех участников текущего раунда
-        const participantsInRound = await BidModel.distinct('participantId', { auctionId, roundNo, status: 'placed' }).session(session);
-        const participantsInCompetition = auction.currentRoundEligible?.length ? [...auction.currentRoundEligible] : participantsInRound;
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: '[closeCurrentRound] НОВАЯ МОДЕЛЬ: подсчет лотов',
+          auctionId: auction._id.toString(),
+          roundNo,
+          lotsDistributed,
+          totalLots,
+          lotsPerRound,
+          lotsRemaining,
+          roundWinnersCount: (auction.roundWinners ?? []).length,
+        }));
+        
+        // КРИТИЧЕСКАЯ ПРОВЕРКА: Если все лоты розданы -> финализация
+        if (lotsRemaining <= 0) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: '[closeCurrentRound] ВСЕ ЛОТЫ РОЗДАНЫ -> финализация',
+            auctionId: auction._id.toString(),
+            roundNo,
+            lotsDistributed,
+            totalLots,
+          }));
+          
+          // Финализируем аукцион (все лоты уже розданы в предыдущих раундах)
+          const fin = await this.finalizeAuctionInSession(auctionId, session);
+          if (!fin || 'statusCode' in fin) {
+            out = fin as CloseRoundOk | ApiError | null;
+            throw new Error('finalize failed');
+          }
+          
+          out = {
+            auctionId: auction._id.toString(),
+            closedRoundNo: roundNo,
+            nextRoundNo: roundNo,
+            roundEndsAt: fin.finishedAt,
+            qualified: [],
+            charged: fin.charged,
+            released: fin.released,
+            winners: fin.winners,
+            winningBids: fin.winningBids,
+            finishedAt: fin.finishedAt,
+          };
+          return;
+        }
+        
+        // ОТКРЫТАЯ СИСТЕМА: Получаем всех участников с placed ставками (исключая roundWinners)
+        const allParticipants = await BidModel.distinct('participantId', { auctionId, status: 'placed' }).session(session);
+        const roundWinnerIds = (auction.roundWinners ?? []).map(w => w.participantId);
+        const participantsInCompetition = allParticipants.filter(p => !roundWinnerIds.includes(p));
         const participantsCount = participantsInCompetition.length;
         
-        // ДОСРОЧНОЕ ЗАВЕРШЕНИЕ: если участников <= лотов
-        if (participantsCount <= lotCount) {
+        // Сколько лотов нужно раздать в этом раунде
+        const lotsToAwardThisRound = Math.min(lotsPerRound, lotsRemaining);
+        
+        // ДОСРОЧНОЕ ЗАВЕРШЕНИЕ: если участников <= лотов которые нужно раздать
+        if (participantsCount <= lotsToAwardThisRound) {
           console.log(JSON.stringify({
             ts: new Date().toISOString(),
             level: 'info',
@@ -1218,11 +1333,12 @@ export class AuctionService {
             
             // Пропускаем UPDATE раунда, сразу финализируем
             // Используем currentRoundEligible если есть, иначе берем всех участников
-            const participantsToFinalize = auction.currentRoundEligible?.length
-              ? auction.currentRoundEligible
-              : participantsInRound;
+            const participantsToFinalizeCount = auction.currentRoundEligible?.length
+              ? auction.currentRoundEligible.length
+              : participantsCount;
             
-            const leaders = await this.getLeaderboard(auctionId, roundNo, Math.min(lotCount, participantsToFinalize.length));
+            const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+            const leaders = await this.getLeaderboard(auctionId, roundNo, Math.min(lotCount, participantsToFinalizeCount), excludeParticipants);
             const qualified = leaders.map((l) => l.participantId);
             
             // Устанавливаем eligible перед финализацией (если еще не установлено)
@@ -1276,7 +1392,8 @@ export class AuctionService {
           }
           
           // Финальный раунд: топ-lotCount выигрывают, остальным возвращаем холды
-          const leaders = await this.getLeaderboard(auctionId, roundNo, lotCount);
+          const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+          const leaders = await this.getLeaderboard(auctionId, roundNo, lotCount, excludeParticipants);
           const roundWinners = leaders.map((l) => ({
             roundNo,
             participantId: l.participantId,
@@ -1426,8 +1543,9 @@ export class AuctionService {
           calculatedTopK: topK,
         }));
         
-        // НОВАЯ ЛОГИКА: топ-lotCount ВЫИГРЫВАЮТ раунд и ВЫБЫВАЮТ, остальные продолжают
-        const leaders = await this.getLeaderboard(auctionId, roundNo, lotCount);
+        // НОВАЯ ЛОГИКА: топ-lotsToAwardThisRound ВЫИГРЫВАЮТ раунд и ВЫБЫВАЮТ, остальные продолжают
+        const excludeParticipants = (auction.roundWinners ?? []).map(w => w.participantId);
+        const leaders = await this.getLeaderboard(auctionId, roundNo, lotsToAwardThisRound, excludeParticipants);
         const roundWinners = leaders.map((l) => ({
           roundNo,
           participantId: l.participantId,
@@ -1436,6 +1554,64 @@ export class AuctionService {
         }));
         const winnerIds = roundWinners.map(w => w.participantId);
         const qualified = participantsInCompetition.filter((p) => !winnerIds.includes(p)); // ИНВЕРСИЯ!
+
+        // EDGE CASE: если qualified.length === 0, отменяем аукцион
+        if (qualified.length === 0) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'warn',
+            msg: '[closeCurrentRound] КРИТИЧЕСКАЯ СИТУАЦИЯ: нет участников для следующего раунда, отменяем аукцион',
+            auctionId: auction._id.toString(),
+            roundNo,
+            participantsInCompetition: participantsInCompetition.length,
+            winnerIds,
+          }));
+
+          // Возвращаем холды всем участникам (и победителям, и проигравшим)
+          const allParticipants = await BidModel.distinct('participantId', { auctionId, status: 'placed' }).session(session);
+          const maxAmounts = await this.getMaxAmounts(auctionId, allParticipants, session);
+          const released: { participantId: string; amount: string; account: LedgerAccountView }[] = [];
+
+          for (const participantId of allParticipants) {
+            const amt = maxAmounts.get(participantId) ?? '0';
+            if (!gt(amt, '0')) continue;
+            const txId = `cancel-empty-qualified:${auction._id.toString()}:${participantId}:release`;
+            try {
+              const account = await this.ledger.releaseHold(participantId, amt, auction.currency, txId, session);
+              released.push({ participantId, amount: amt, account });
+            } catch (error) {
+              console.log(JSON.stringify({
+                ts: new Date().toISOString(),
+                level: 'error',
+                msg: '[closeCurrentRound] ошибка при возврате холда',
+                auctionId: auction._id.toString(),
+                participantId,
+                error: (error as Error).message,
+              }));
+            }
+          }
+
+          // Отменяем аукцион
+          await AuctionModel.updateOne(
+            { _id: auctionId, status: 'active' },
+            {
+              $set: { status: 'cancelled' },
+              $unset: {
+                currentRoundNo: '',
+                currentRoundEndsAt: '',
+                currentRoundEligible: '',
+              },
+            },
+            { session }
+          );
+
+          out = {
+            auctionId: auction._id.toString(),
+            status: 'cancelled',
+            released,
+          } as CancelAuctionOk;
+          return;
+        }
 
         // ДИАГНОСТИКА: логируем данные раунда
         console.log(JSON.stringify({
@@ -1449,8 +1625,8 @@ export class AuctionService {
           topK,
           leadersCount: leaders.length,
           leaders: leaders.map(l => ({ participantId: l.participantId, amount: l.amount })),
-          participantsInRound,
-          currentRoundEligible: auction.currentRoundEligible,
+          allParticipants: allParticipants.length,
+          roundWinnersCount: roundWinnerIds.length,
           participantsInCompetition,
           participantsCount,
           roundWinners: roundWinners.map(w => ({ id: w.participantId, amount: w.amount })),
@@ -1584,6 +1760,228 @@ export class AuctionService {
     }
   }
 
+  async skipRoundWithRefund(
+    auctionIdStr: string
+  ): Promise<CloseRoundOk | ApiError | null> {
+    if (!mongoose.isValidObjectId(auctionIdStr)) return null;
+    const auctionId = new mongoose.Types.ObjectId(auctionIdStr);
+    const session = await mongoose.startSession();
+    try {
+      let out: CloseRoundOk | ApiError | null = null;
+
+      await withTransactionRetries(session, async () => {
+        const auction = await AuctionModel.findById(auctionId).session(session);
+        if (!auction) {
+          out = null;
+          return;
+        }
+        if (auction.status !== 'active' || !auction.currentRoundNo) {
+          out = { statusCode: 409, error: 'Conflict', message: 'auction is not active' };
+          return;
+        }
+
+        const roundNo = auction.currentRoundNo;
+        const maxRounds = auction.maxRounds ?? 5;
+
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: '[skipRoundWithRefund] пропуск раунда с возвратом ставок',
+          auctionId: auction._id.toString(),
+          roundNo,
+          maxRounds,
+        }));
+
+        // Получаем всех участников текущего раунда
+        const allParticipants = await BidModel.distinct('participantId', { auctionId, status: 'placed' }).session(session);
+        const roundWinnerIds = (auction.roundWinners ?? []).map(w => w.participantId);
+        const participantsInCompetition = allParticipants.filter(p => !roundWinnerIds.includes(p));
+
+        // Возвращаем холды ВСЕМ участникам
+        const maxAmounts = await this.getMaxAmounts(auctionId, participantsInCompetition, session);
+        const released: { participantId: string; amount: string; account: LedgerAccountView }[] = [];
+
+        for (const participantId of participantsInCompetition) {
+          const amt = maxAmounts.get(participantId) ?? '0';
+          if (!gt(amt, '0')) continue;
+          const txId = `skip-refund:${auction._id.toString()}:${roundNo}:${participantId}:release`;
+          try {
+            const account = await this.ledger.releaseHold(participantId, amt, auction.currency, txId, session);
+            released.push({ participantId, amount: amt, account });
+            
+            console.log(JSON.stringify({
+              ts: new Date().toISOString(),
+              level: 'info',
+              msg: '[skipRoundWithRefund] холд возвращен',
+              auctionId: auction._id.toString(),
+              participantId,
+              amount: amt,
+            }));
+          } catch (error) {
+            console.log(JSON.stringify({
+              ts: new Date().toISOString(),
+              level: 'error',
+              msg: '[skipRoundWithRefund] ошибка при возврате холда',
+              auctionId: auction._id.toString(),
+              participantId,
+              error: (error as Error).message,
+            }));
+          }
+        }
+
+        // ИСПРАВЛЕНИЕ ДЮПА ДЕНЕГ: Аннулируем все ставки текущего раунда
+        const cancelBidsResult = await BidModel.updateMany(
+          {
+            auctionId,
+            roundNo,
+            status: 'placed',
+          },
+          {
+            $set: { status: 'cancelled' },
+          },
+          { session }
+        );
+
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: '[skipRoundWithRefund] ставки аннулированы для предотвращения дюпа',
+          auctionId: auction._id.toString(),
+          roundNo,
+          cancelledBidsCount: cancelBidsResult.modifiedCount,
+        }));
+
+        // Проверяем: это последний раунд?
+        if (roundNo >= maxRounds) {
+          // Завершаем аукцион БЕЗ победителей
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: '[skipRoundWithRefund] последний раунд - завершаем аукцион без победителей',
+            auctionId: auction._id.toString(),
+            roundNo,
+            maxRounds,
+          }));
+
+          const now = new Date();
+          await AuctionModel.updateOne(
+            {
+              _id: auctionId,
+              status: 'active',
+              currentRoundNo: roundNo,
+              rounds: { $elemMatch: { roundNo, status: 'active' } },
+            },
+            {
+              $set: {
+                status: 'finished',
+                endsAt: now,
+                finishedAt: now,
+                winners: [],
+                winningBids: [],
+                'rounds.$.status': 'finished',
+              },
+              $unset: {
+                currentRoundNo: '',
+                currentRoundEndsAt: '',
+                currentRoundEligible: '',
+              },
+            },
+            { session }
+          );
+
+          out = {
+            auctionId: auction._id.toString(),
+            closedRoundNo: roundNo,
+            nextRoundNo: roundNo,
+            roundEndsAt: now.toISOString(),
+            qualified: [],
+            charged: [],
+            released,
+            winners: [],
+            winningBids: [],
+            finishedAt: now.toISOString(),
+          };
+          return;
+        }
+
+        // Переходим к следующему раунду без победителей
+        const nextRoundNo = roundNo + 1;
+        const now = new Date();
+        const endsAt = new Date(now.getTime() + auction.roundDurationSec * 1000);
+
+        const upd = await AuctionModel.updateOne(
+          {
+            _id: auctionId,
+            status: 'active',
+            currentRoundNo: roundNo,
+            rounds: { $elemMatch: { roundNo, status: 'active' } },
+          },
+          {
+            $set: {
+              currentRoundNo: nextRoundNo,
+              currentRoundEndsAt: endsAt,
+              currentRoundEligible: participantsInCompetition,
+              'rounds.$.status': 'finished',
+            },
+          },
+          { session }
+        );
+
+        if (upd.modifiedCount !== 1) {
+          out = { statusCode: 409, error: 'Conflict', message: 'round already closed' };
+          throw new Error('skip race');
+        }
+
+        // Создаем новый раунд
+        await AuctionModel.updateOne(
+          {
+            _id: auctionId,
+            status: 'active',
+            currentRoundNo: nextRoundNo,
+            rounds: { $not: { $elemMatch: { roundNo: nextRoundNo } } },
+          },
+          {
+            $push: {
+              rounds: {
+                roundNo: nextRoundNo,
+                status: 'active',
+                startsAt: now,
+                endsAt,
+                scheduledEndsAt: endsAt,
+                extensionsCount: 0,
+              },
+            },
+          },
+          { session }
+        );
+
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: '[skipRoundWithRefund] раунд пропущен, переход к следующему',
+          auctionId: auction._id.toString(),
+          closedRoundNo: roundNo,
+          nextRoundNo,
+          releasedCount: released.length,
+        }));
+
+        out = {
+          auctionId: auction._id.toString(),
+          closedRoundNo: roundNo,
+          nextRoundNo,
+          roundEndsAt: endsAt.toISOString(),
+          qualified: participantsInCompetition,
+          charged: [],
+          released,
+        };
+      });
+
+      return out;
+    } finally {
+      session.endSession();
+    }
+  }
+
   async cancelAuction(auctionIdStr: string): Promise<CancelAuctionOk | ApiError | null> {
     if (!mongoose.isValidObjectId(auctionIdStr)) return null;
     const auctionId = new mongoose.Types.ObjectId(auctionIdStr);
@@ -1663,6 +2061,157 @@ export class AuctionService {
     } finally {
       session.endSession();
     }
+  }
+
+  async getParticipantWins(participantId: string): Promise<{
+    auctionId: string;
+    auctionTitle: string;
+    roundNo: number;
+    amount: string;
+    wonAt: string;
+    captured: boolean;
+  }[]> {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: '[getParticipantWins] запрос истории выигрышей',
+      participantId,
+    }));
+    
+    // ИСПРАВЛЕНИЕ: Ищем как в roundWinners так и в finishedных аукционах где участник в winners
+    const auctions = await AuctionModel.find({
+      $or: [
+        { 'roundWinners.participantId': participantId },
+        { status: 'finished', winners: participantId }
+      ]
+    }).lean();
+    
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: '[getParticipantWins] найдено аукционов',
+      participantId,
+      auctionsCount: auctions.length,
+      auctionIds: auctions.map(a => a._id.toString()),
+    }));
+    
+    const wins: {
+      auctionId: string;
+      auctionTitle: string;
+      roundNo: number;
+      amount: string;
+      wonAt: string;
+      captured: boolean;
+    }[] = [];
+    
+    for (const auction of auctions) {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        msg: '[getParticipantWins] обработка аукциона',
+        auctionId: auction._id.toString(),
+        status: auction.status,
+        roundWinnersCount: (auction.roundWinners || []).length,
+        winnersCount: (auction.winners || []).length,
+        winningBidsCount: (auction.winningBids || []).length,
+      }));
+      
+      // 1. Победы в промежуточных раундах (из roundWinners)
+      const roundWinners = auction.roundWinners || [];
+      for (const winner of roundWinners) {
+        if (winner.participantId === participantId) {
+          const round = auction.rounds.find(r => r.roundNo === winner.roundNo);
+          
+          // Показываем только РЕАЛЬНЫЕ победы (когда раунд завершен)
+          if (!round || round.status !== 'finished') {
+            console.log(JSON.stringify({
+              ts: new Date().toISOString(),
+              level: 'warn',
+              msg: '[getParticipantWins] пропускаем незавершенный раунд',
+              auctionId: auction._id.toString(),
+              roundNo: winner.roundNo,
+              roundStatus: round?.status,
+            }));
+            continue;
+          }
+          
+          wins.push({
+            auctionId: auction._id.toString(),
+            auctionTitle: auction.title,
+            roundNo: winner.roundNo,
+            amount: winner.amount,
+            wonAt: round.endsAt?.toISOString() || auction.updatedAt.toISOString(),
+            captured: true,
+          });
+          
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: '[getParticipantWins] добавлена победа в раунде',
+            auctionId: auction._id.toString(),
+            roundNo: winner.roundNo,
+            amount: winner.amount,
+          }));
+        }
+      }
+      
+      // 2. ИСПРАВЛЕНИЕ: Финальная победа (из winningBids для finished аукционов)
+      // Это победители которые не в roundWinners, но в финальной истории
+      if (auction.status === 'finished' && auction.winners?.includes(participantId)) {
+        const winningBid = (auction.winningBids || []).find(wb => wb.participantId === participantId);
+        
+        // Проверяем что эта победа еще не добавлена из roundWinners
+        const alreadyAdded = roundWinners.some(rw => rw.participantId === participantId);
+        
+        if (winningBid && !alreadyAdded) {
+          // Определяем номер раунда - берем максимальный finished раунд
+          const finishedRounds = auction.rounds.filter(r => r.status === 'finished');
+          const lastRoundNo = finishedRounds.length > 0
+            ? Math.max(...finishedRounds.map(r => r.roundNo))
+            : auction.maxRounds || 1;
+          
+          wins.push({
+            auctionId: auction._id.toString(),
+            auctionTitle: auction.title,
+            roundNo: lastRoundNo,
+            amount: winningBid.amount,
+            wonAt: auction.finishedAt?.toISOString() || auction.endsAt?.toISOString() || auction.updatedAt.toISOString(),
+            captured: true,
+          });
+          
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: '[getParticipantWins] добавлена ФИНАЛЬНАЯ победа',
+            auctionId: auction._id.toString(),
+            roundNo: lastRoundNo,
+            amount: winningBid.amount,
+            participantId,
+          }));
+        } else if (!winningBid) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: 'warn',
+            msg: '[getParticipantWins] участник в winners но нет winningBid',
+            auctionId: auction._id.toString(),
+            participantId,
+            winners: auction.winners,
+            winningBids: auction.winningBids,
+          }));
+        }
+      }
+    }
+    
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: '[getParticipantWins] результат',
+      participantId,
+      winsCount: wins.length,
+      wins: wins.map(w => ({ auctionId: w.auctionId, roundNo: w.roundNo, amount: w.amount })),
+    }));
+    
+    return wins;
   }
 }
 
