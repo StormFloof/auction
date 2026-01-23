@@ -76,7 +76,7 @@ python contest-auction/deploy/deploy.py
 
 **Безопасность (10/10):**
 - ✅ **XSS Protection** — экранирование всех пользовательских данных в UI
-- ✅ **Rate Limiting** — 100 запросов за 15 минут с одного IP
+- ✅ **Rate Limiting** — 2000 запросов за 1 минуту с одного IP
 - ✅ **CORS** — настроенная политика межсайтовых запросов
 - ✅ **Helmet** — защитные HTTP-заголовки (CSP, XSS, MIME)
 - ✅ **Input Validation** — Zod-схемы для всех API endpoints
