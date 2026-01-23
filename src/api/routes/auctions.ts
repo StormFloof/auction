@@ -231,6 +231,9 @@ export async function auctionsRoutes(app: FastifyInstance) {
           roundDurationSec: Type.Optional(Type.Number({ minimum: 5 })),
           minIncrement: Amount,
           maxRounds: Type.Optional(Type.Number({ minimum: 1, maximum: 10 })),
+          snipingWindowSec: Type.Optional(Type.Number({ minimum: 0, maximum: 300 })),
+          extendBySec: Type.Optional(Type.Number({ minimum: 0, maximum: 300 })),
+          maxExtensionsPerRound: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
         }),
       },
     },
@@ -243,6 +246,9 @@ export async function auctionsRoutes(app: FastifyInstance) {
           roundDurationSec?: number;
           minIncrement: string | number;
           maxRounds?: number;
+          snipingWindowSec?: number;
+          extendBySec?: number;
+          maxExtensionsPerRound?: number;
         };
 
         // Санитизация пользовательских данных
@@ -269,9 +275,9 @@ export async function auctionsRoutes(app: FastifyInstance) {
           minIncrement: body.minIncrement,
           topK: 10,
           maxRounds: body.maxRounds ?? 5,
-          snipingWindowSec: 10,
-          extendBySec: 10,
-          maxExtensionsPerRound: 10,
+          snipingWindowSec: body.snipingWindowSec ?? 60,
+          extendBySec: body.extendBySec ?? 30,
+          maxExtensionsPerRound: body.maxExtensionsPerRound ?? 10,
         });
 
         return reply.status(201).send(created);
@@ -357,7 +363,7 @@ export async function auctionsRoutes(app: FastifyInstance) {
           topK: Type.Optional(Type.Number({ minimum: 1 })),
           snipingWindowSec: Type.Optional(Type.Number({ minimum: 0 })),
           extendBySec: Type.Optional(Type.Number({ minimum: 0 })),
-          maxExtensionsPerRound: Type.Optional(Type.Number({ minimum: 0 })),
+          maxExtensionsPerRound: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
         }),
       },
     },

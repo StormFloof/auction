@@ -874,6 +874,9 @@ const handleCreateAuction = async () => {
     const minIncrement = parseInt($('minIncrement').value);
     const duration = parseInt($('auctionDuration').value);
     const maxRounds = parseInt($('maxRounds').value);
+    const snipingWindow = parseInt($('snipingWindow').value);
+    const extendBy = parseInt($('extendBy').value);
+    const maxExtensions = parseInt($('maxExtensions').value);
     
     if (!code) {
         showToast('Введите код аукциона', 'error');
@@ -905,6 +908,21 @@ const handleCreateAuction = async () => {
         return;
     }
     
+    if (isNaN(snipingWindow) || snipingWindow < 0 || snipingWindow > 300) {
+        showToast('Окно снайпинга должно быть от 0 до 300 секунд', 'error');
+        return;
+    }
+    
+    if (isNaN(extendBy) || extendBy < 0 || extendBy > 300) {
+        showToast('Продление раунда должно быть от 0 до 300 секунд', 'error');
+        return;
+    }
+    
+    if (isNaN(maxExtensions) || maxExtensions < 0 || maxExtensions > 100) {
+        showToast('Лимит продлений должен быть от 0 до 100', 'error');
+        return;
+    }
+    
     try {
         // Создаем аукцион
         const createResult = await api.post('/admin/auction/create', {
@@ -913,7 +931,10 @@ const handleCreateAuction = async () => {
             lotsCount: lotsCount,
             minIncrement: minIncrement,
             roundDurationSec: duration * 60, // Convert to seconds
-            maxRounds: maxRounds
+            maxRounds: maxRounds,
+            snipingWindowSec: snipingWindow,
+            extendBySec: extendBy,
+            maxExtensionsPerRound: maxExtensions
         });
         
         // Стартуем аукцион автоматически
@@ -931,6 +952,9 @@ const handleCreateAuction = async () => {
         $('minIncrement').value = '100';
         $('auctionDuration').value = '5';
         $('maxRounds').value = '5';
+        $('snipingWindow').value = '60';
+        $('extendBy').value = '30';
+        $('maxExtensions').value = '10';
         
         await loadAuctionData();
     } catch (error) {

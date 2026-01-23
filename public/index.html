@@ -341,6 +341,21 @@
                         <input type="number" id="maxRounds" class="form-input" value="5" min="1" max="10">
                         <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">После этого количества раундов аукцион завершится автоматически (обычно 5)</small>
                     </div>
+                    <div class="form-group">
+                        <label for="snipingWindow">Окно снайпинга (сек) <small style="color: #666;">(последние N секунд раунда)</small></label>
+                        <input type="number" id="snipingWindow" class="form-input" value="60" min="0" max="300">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">При конкурентной ставке в последние 60 секунд раунд продлится</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="extendBy">Продление раунда (сек) <small style="color: #666;">(на сколько продлевать)</small></label>
+                        <input type="number" id="extendBy" class="form-input" value="30" min="0" max="300">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">На сколько секунд продлить раунд при снайпинге (30 сек)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="maxExtensions">Лимит продлений <small style="color: #666;">(max кол-во продлений)</small></label>
+                        <input type="number" id="maxExtensions" class="form-input" value="10" min="0" max="100">
+                        <small style="display: block; margin-top: 8px; color: #666; font-size: 13px;">Максимальное количество продлений раунда (0 = без продлений, обычно 10)</small>
+                    </div>
                     <button class="btn btn-primary" id="createAuctionBtn">
                         <i class="fas fa-rocket"></i>
                         Создать аукцион
